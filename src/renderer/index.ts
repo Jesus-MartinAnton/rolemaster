@@ -89,10 +89,9 @@ export async function playAdventure(adventure: Adventure): Promise<void> {
   console.log(wrapText(adventure.meta.summary));
   console.log();
 
-  // Wait for user to start
+  // Wait for user to start (don't close rl, we reuse it)
   await new Promise<void>((resolve) => {
     rl.question(pc.cyan('  Press Enter to begin...'), () => {
-      rl.close();
       resolve();
     });
   });
