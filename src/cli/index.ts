@@ -6,7 +6,7 @@
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { generateAdventure } from '../tools/generate.js';
-import { saveAdventure, loadAdventure, listAdventures } from '../tools/storage.js';
+import { saveAdventure, loadAdventure, listAdventures, deleteAdventure } from '../tools/storage.js';
 import { playAdventure } from '../renderer/index.js';
 
 const program = new Command();
@@ -103,6 +103,27 @@ program
       }
 
       console.log(`\n  ${pc.dim('Tip:')} ${pc.white('rolemaster play <id>')} ${pc.dim('to play an adventure')}\n`);
+    } catch (err) {
+      const error = err as Error;
+      console.error(`\n  ${pc.red('✗')} ${error.message}\n`);
+      process.exit(1);
+    }
+  });
+
+// COMMAND 4: delete <id>
+program
+  .command('delete')
+  .description('Delete a saved adventure')
+  .argument('<id>', 'adventure ID to delete')
+  .action(async (id) => {
+    try {
+      const deleted = await deleteAdventure(id);
+
+      if (deleted) {
+        console.log(`  ${pc.green('✓')} ${pc.dim('Deleted:')} ${pc.cyan(id)}\n`);
+      } else {
+        console.log(`  ${pc.yellow('Adventure not found:')} ${pc.cyan(id)}\n`);
+      }
     } catch (err) {
       const error = err as Error;
       console.error(`\n  ${pc.red('✗')} ${error.message}\n`);

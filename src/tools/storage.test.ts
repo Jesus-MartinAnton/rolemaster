@@ -94,4 +94,23 @@ describe('storage', () => {
 
     expect(list).toEqual([]);
   });
+
+  it('should delete an existing adventure', async () => {
+    const { saveAdventure, deleteAdventure, loadAdventure, getAdventurePath } = await import('./storage.js');
+
+    const id = await saveAdventure(sampleAdventure as never);
+    const deleted = await deleteAdventure(id);
+
+    expect(deleted).toBe(true);
+
+    await expect(loadAdventure(id)).rejects.toThrow();
+  });
+
+  it('should return false when deleting non-existent adventure', async () => {
+    const { deleteAdventure } = await import('./storage.js');
+
+    const deleted = await deleteAdventure('does-not-exist');
+
+    expect(deleted).toBe(false);
+  });
 });

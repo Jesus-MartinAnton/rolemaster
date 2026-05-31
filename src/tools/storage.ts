@@ -4,7 +4,7 @@
  * Phase 3: Core Tools
  */
 
-import { readFile, writeFile, readdir, stat, mkdir } from 'fs/promises';
+import { readFile, writeFile, readdir, stat, mkdir, unlink } from 'fs/promises';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import type { Adventure, AdventureListItem } from '../types/index.js';
@@ -169,8 +169,6 @@ export async function deleteAdventure(id: string): Promise<boolean> {
   const filePath = getAdventurePath(id);
 
   try {
-    await stat(filePath);
-    const { unlink } = await import('fs/promises');
     await unlink(filePath);
     return true;
   } catch (err) {
