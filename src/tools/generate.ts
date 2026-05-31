@@ -7,6 +7,7 @@
 import type { Adventure } from '../types/index.js';
 import { validateAdventure } from './validate.js';
 import { getProvider } from '../providers/index.js';
+import pc from 'picocolors';
 
 const MAX_RETRIES = 3;
 
@@ -39,7 +40,10 @@ Reglas IMPORTANTES:
 
 /**
  * Extracts JSON from a response string, handling various wrappers.
- * Logs the raw text before trying to parse for debugging.
+ * Tries multiple extraction strategies:
+ * 1. Markdown code blocks (```json ... ```)
+ * 2. First { to last } range
+ * 3. Direct parse
  */
 function extractJson(response: string): unknown {
   if (!response || !response.trim()) {
@@ -47,41 +51,30 @@ function extractJson(response: string): unknown {
   }
 
   const cleaned = response.trim();
-  console.log(`extractJson: trying to parse ${cleaned.length} chars`);
-  console.log(`First 80: ${cleaned.slice(0, 80)}`);
 
-  // Try markdown code blocks
+  // Strategy 1: Markdown code blocks
   const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (jsonMatch) {
     try {
-      console.log('Found markdown JSON block');
       return JSON.parse(jsonMatch[1].trim());
     } catch { /* fall through */ }
   }
 
-  // Find JSON between first { and last }
+  // Strategy 2: Find JSON between first { and last }
   const firstBrace = cleaned.indexOf('{');
   const lastBrace = cleaned.lastIndexOf('}');
-  console.log(`First { at ${firstBrace}, last } at ${lastBrace}`);
 
   if (firstBrace !== -1 && lastBrace > firstBrace) {
-    const jsonStr = cleaned.slice(firstBrace, lastBrace + 1);
-    console.log(`Extracted JSON string (${jsonStr.length} chars)`);
-    console.log(`Starts with: ${jsonStr.slice(0, 60)}`);
-    console.log(`Ends with: ${jsonStr.slice(-60)}`);
     try {
-      return JSON.parse(jsonStr);
-    } catch (e) {
-      console.log(`JSON parse error: ${(e as Error).message}`);
-      // Fall through to direct parse
-    }
+      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+    } catch { /* fall through */ }
   }
 
-  // Direct parse
+  // Strategy 3: Direct parse
   try {
     return JSON.parse(cleaned);
   } catch {
-    throw new Error(`Cannot parse as JSON: ${cleaned.slice(0, 300)}...`);
+    throw new Error('Failed to parse model response as JSON');
   }
 }
 
@@ -96,14 +89,9 @@ export async function generateAdventure(prompt: string): Promise<Adventure> {
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      console.log(`Generating adventure (attempt ${attempt}/${MAX_RETRIES})...`);
-      console.log(`Using provider: ${provider.name}`);
-
       const startTime = Date.now();
-      console.log(`  Waiting for response (timeout: 600s)...`);
       const response = await provider.generate(userPrompt, SYSTEM_PROMPT);
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`  Response received in ${elapsed}s: ${response.length} chars`);
 
       if (!response.trim()) {
         throw new Error('Empty response from provider');
@@ -113,8 +101,7 @@ export async function generateAdventure(prompt: string): Promise<Adventure> {
       try {
         parsed = extractJson(response);
       } catch (parseErr) {
-        console.warn(`Parse failed on attempt ${attempt}`);
-        console.warn(`First 150 chars: ${response.slice(0, 150)}`);
+        console.warn(`\n  ⚠ Retrying: invalid JSON from model (${(parseErr as Error).message})\n`);
         lastError = new Error(`Invalid JSON: ${(parseErr as Error).message}`);
         continue;
       }
@@ -122,24 +109,20 @@ export async function generateAdventure(prompt: string): Promise<Adventure> {
       const validationResult = validateAdventure(JSON.stringify(parsed));
 
       if (!validationResult.valid) {
-        console.warn(`Validation failed on attempt ${attempt}:`);
-        validationResult.errors?.forEach((err) => console.warn(`  - ${err.path}: ${err.message}`));
-        userPrompt += `\n\nErrores a corregir: ${validationResult.errors?.map((e) => e.message).join(', ')}`;
-        lastError = new Error(`Validation: ${validationResult.errors?.map((e) => e.message).join(', ')}`);
+        const errorMessages = validationResult.errors?.map((e) => e.message).join('; ');
+        console.warn(`\n  ⚠ Retrying: validation failed (${errorMessages})\n`);
+        userPrompt += `\n\nErrores a corregir: ${errorMessages}`;
+        lastError = new Error(`Validation: ${errorMessages}`);
         continue;
       }
 
-      console.log('Adventure generated and validated!');
+      console.log(`  ${pc.green('✓')} Generated in ${elapsed}s${attempt > 1 ? ` (${attempt} attempt(s))` : ''}`);
       return parsed as Adventure;
     } catch (err) {
       lastError = err as Error;
-      // FIX: Network errors (ECONNREFUSED, fetch failed, etc.) are now retried
-      // instead of aborting immediately. All errors continue the retry loop.
-      console.warn(`Attempt ${attempt} failed: ${lastError.message}`);
+      console.warn(`\n  ⚠ Retrying: ${lastError.message}\n`);
     }
   }
 
-  throw new Error(
-    `Failed after ${MAX_RETRIES} attempts. Provider: ${provider.name}. Last error: ${lastError?.message}`
-  );
+  throw new Error(`Failed to generate adventure (${MAX_RETRIES} attempts). Check that your LLM provider is running.`);
 }
