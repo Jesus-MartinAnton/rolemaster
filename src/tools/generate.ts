@@ -1,14 +1,13 @@
 /**
  * Adventure Generation Tool
- * Calls Ollama to generate an adventure from a prompt.
- * Uses streaming to handle models with verbose thinking (Qwen3.5).
+ * Uses the configured LLM provider to generate adventures.
+ * Supports both Ollama and OpenAI-compatible APIs transparently.
  */
 
 import type { Adventure } from '../types/index.js';
 import { validateAdventure } from './validate.js';
+import { getProvider } from '../providers/index.js';
 
-const OLLAMA_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-const DEFAULT_MODEL = process.env.OLLAMA_MODEL || 'qwen3.5:9b-q8_0';
 const MAX_RETRIES = 3;
 
 const SYSTEM_PROMPT = `Eres un master de rol. Genera aventuras SOLO en formato JSON, sin texto adicional.
@@ -39,80 +38,6 @@ Reglas IMPORTANTES:
 - No añadas texto antes ni después del JSON`;
 
 /**
- * Calls Ollama using streaming and accumulates the full response.
- * This handles verbose thinking models correctly.
- */
-async function callOllama(model: string, system: string, prompt: string): Promise<string> {
-  const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      system,
-      prompt,
-      stream: true,
-      options: {
-        temperature: 0.7,
-        num_predict: 4096
-      }
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Ollama API error: ${response.status}`);
-  }
-
-  if (!response.body) {
-    throw new Error('No response body from Ollama');
-  }
-
-  // Read the stream chunk by chunk
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let fullText = '';
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const data = JSON.parse(line);
-        if (data.response) {
-          fullText += data.response;
-        } else if (data.thinking) {
-          fullText += data.thinking;
-        }
-      } catch {
-        // Skip malformed lines
-      }
-    }
-  }
-
-  // Flush remaining buffer
-  if (buffer.trim()) {
-    try {
-      const data = JSON.parse(buffer);
-      if (data.response) {
-        fullText += data.response;
-      } else if (data.thinking) {
-        fullText += data.thinking;
-      }
-    } catch {
-      // skip
-    }
-  }
-
-  return fullText;
-}
-
-/**
  * Extracts JSON from a response string, handling various wrappers.
  * Logs the raw text before trying to parse for debugging.
  */
@@ -138,7 +63,7 @@ function extractJson(response: string): unknown {
   const firstBrace = cleaned.indexOf('{');
   const lastBrace = cleaned.lastIndexOf('}');
   console.log(`First { at ${firstBrace}, last } at ${lastBrace}`);
-  
+
   if (firstBrace !== -1 && lastBrace > firstBrace) {
     const jsonStr = cleaned.slice(firstBrace, lastBrace + 1);
     console.log(`Extracted JSON string (${jsonStr.length} chars)`);
@@ -162,22 +87,26 @@ function extractJson(response: string): unknown {
 
 /**
  * Generate an adventure from a natural language prompt.
- * Uses ReAct pattern with 3 retries.
+ * Uses the configured LLM provider with 3 retries.
  */
 export async function generateAdventure(prompt: string): Promise<Adventure> {
-  const model = DEFAULT_MODEL;
+  const provider = getProvider();
   let userPrompt = `Genera una aventura sobre: ${prompt}`;
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       console.log(`Generating adventure (attempt ${attempt}/${MAX_RETRIES})...`);
+      console.log(`Using provider: ${provider.name}`);
 
-      const response = await callOllama(model, SYSTEM_PROMPT, userPrompt);
-      console.log(`Got response: ${response.length} chars`);
+      const startTime = Date.now();
+      console.log(`  Waiting for response (timeout: 600s)...`);
+      const response = await provider.generate(userPrompt, SYSTEM_PROMPT);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`  Response received in ${elapsed}s: ${response.length} chars`);
 
       if (!response.trim()) {
-        throw new Error('Empty response from Ollama');
+        throw new Error('Empty response from provider');
       }
 
       let parsed: unknown;
@@ -194,29 +123,23 @@ export async function generateAdventure(prompt: string): Promise<Adventure> {
 
       if (!validationResult.valid) {
         console.warn(`Validation failed on attempt ${attempt}:`);
-        validationResult.errors?.forEach(err => console.warn(`  - ${err.path}: ${err.message}`));
-        userPrompt += `\n\nErrores a corregir: ${validationResult.errors?.map(e => e.message).join(', ')}`;
-        lastError = new Error(`Validation: ${validationResult.errors?.map(e => e.message).join(', ')}`);
+        validationResult.errors?.forEach((err) => console.warn(`  - ${err.path}: ${err.message}`));
+        userPrompt += `\n\nErrores a corregir: ${validationResult.errors?.map((e) => e.message).join(', ')}`;
+        lastError = new Error(`Validation: ${validationResult.errors?.map((e) => e.message).join(', ')}`);
         continue;
       }
 
-      console.log('✅ Adventure generated and validated!');
+      console.log('Adventure generated and validated!');
       return parsed as Adventure;
-
     } catch (err) {
       lastError = err as Error;
-
-      if (lastError.message.includes('ECONNREFUSED') || lastError.message.includes('fetch failed')) {
-        throw new Error(`Cannot connect to Ollama at ${OLLAMA_URL}. Is it running?`);
-      }
-
+      // FIX: Network errors (ECONNREFUSED, fetch failed, etc.) are now retried
+      // instead of aborting immediately. All errors continue the retry loop.
       console.warn(`Attempt ${attempt} failed: ${lastError.message}`);
     }
   }
 
-  throw new Error(`Failed after ${MAX_RETRIES} attempts. Last: ${lastError?.message}`);
-}
-
-export function getOllamaConfig(): { url: string; model: string } {
-  return { url: OLLAMA_URL, model: DEFAULT_MODEL };
+  throw new Error(
+    `Failed after ${MAX_RETRIES} attempts. Provider: ${provider.name}. Last error: ${lastError?.message}`
+  );
 }

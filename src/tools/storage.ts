@@ -96,8 +96,20 @@ export async function loadAdventure(id: string): Promise<Adventure> {
 
   try {
     const content = await readFile(filePath, 'utf-8');
-    const adventure = JSON.parse(content) as Adventure;
-    return adventure;
+    const adventure = JSON.parse(content) as Record<string, unknown>;
+
+    // FIX: Runtime validation — corrupted files would crash downstream
+    if (!adventure.meta || typeof adventure.meta !== 'object') {
+      throw new Error(`Invalid adventure file: ${id} - missing or invalid "meta" field`);
+    }
+    if (!Array.isArray(adventure.scenes)) {
+      throw new Error(`Invalid adventure file: ${id} - missing or invalid "scenes" field`);
+    }
+    if (adventure.scenes.length === 0) {
+      throw new Error(`Invalid adventure file: ${id} - "scenes" array is empty`);
+    }
+
+    return adventure as unknown as Adventure;
   } catch (err) {
     const nodeErr = err as NodeJS.ErrnoException;
     if (nodeErr.code === 'ENOENT') {

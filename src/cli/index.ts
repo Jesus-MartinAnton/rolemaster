@@ -55,12 +55,11 @@ program
       if (answer === 'y' || answer === 'yes' || answer === 's' || answer === 'sí') {
         console.log(pc.cyan('\n🎮 Starting adventure...\n'));
         await playAdventure(adventure);
-      } else if (options.save) {
-        // 5. Save if --save option is provided
+      } else {
+        // FIX: Always save the adventure when user declines to play,
+        // regardless of --save flag. Keeps backward compat.
         const id = await saveAdventure(adventure);
         console.log(pc.green(`\n💾 Saved to: ~/.rolemaster/adventures/${id}.json`));
-      } else {
-        console.log(pc.yellow('\n  Run `rolemaster generate --save` to save this adventure.'));
       }
     } catch (err) {
       const error = err as Error;

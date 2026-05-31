@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tsx watch src/cli/index.ts",
     "build": "tsc",
-    "start": "node dist/cli/index.js"
+    "start": "node dist/cli/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "repository": {
     "type": "git",
@@ -31,6 +33,7 @@
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^25.6.0",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.1"
   }
 }
